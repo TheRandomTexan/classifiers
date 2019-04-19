@@ -1,0 +1,410 @@
+---
+title: "Classifiers:<br>Discriminant Analysis and<br>Regression Trees"
+author: "Statistics and Data Analysis"
+date: "11/15/2018"
+output: 
+  ioslides_presentation:
+    widescreen: true
+    smaller: true
+logo: "/COMMON LECTURES/DrZarkov.jpg"
+bibliography:  "/COMMON LECTURES/lecturenotes.bib"
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = FALSE, tidy=TRUE)
+library(tidyverse)
+library(gridExtra)
+library(MASS)
+library(rpart)
+library(rpart.plot) # prp()
+library(kableExtra)
+```
+
+# Discriminant Analysis
+
+## how it works
+
+Consider 3 unclassified observations:
+
+```{r plot-iris-petal-width, fig.height=4, fig.align='center'}
+data("iris")
+ggplot(data=iris, aes(Petal.Width, fill=Species, color=Species)) +
+  geom_density(alpha=0.2) +
+  geom_vline(xintercept = c(0.4, 1.55, 1.75), color="blue", linetype="dashed") + 
+  labs(title="Petal Widths") +
+  theme_classic()
+```
+
+Classify each according to the largest density value at each co-ordinate.
+
+## Fisher's irises, again
+
+```{r plot-iris-data, fig.height=5}
+gPetal <- ggplot(data=iris, aes(x=Petal.Length, y=Petal.Width)) +
+  geom_point( aes(color=iris$Species), size=2.0, show.legend=FALSE) +
+  geom_density_2d(aes(group=Species), color="gray10") +
+  labs(title="Petal Dimensions") +
+  theme_classic()
+
+gSepal <- ggplot(data=iris, aes(x=Sepal.Length, y=Sepal.Width)) +
+  geom_point( aes(color=iris$Species), size=2.0, show.legend=TRUE) +
+  geom_density_2d(aes(group=Species), color="gray10") +
+  labs(title="Sepal Dimensions") +
+  theme_classic()
+
+grid.arrange(gPetal, gSepal, nrow=1, ncol=2)
+```
+
+## linear discriminant analysis (LDA)
+
+```{r iris-lda, echo=TRUE}
+summary(
+  iris.lda <- lda(Species ~ Petal.Length+Petal.Width+Sepal.Length+Sepal.Width, data=iris) 
+)
+```
+
+## check the fits {data-background="/COMMON LECTURES/graphPaper.jpg"}
+
+<div class="blue3">
+
+```{r iris-lda-fits}
+lda.pred <- predict(iris.lda)
+F <- table(lda.pred$class, iris$Species)
+rownames(F) <- paste0("predicted ", iris$Species%>% levels)
+F %>% addmargins 
+
+miss.rate <- 1 - sum(diag(F))/length(iris$Species)
+names(miss.rate) <- "misclassification rate"
+miss.rate
+```
+
+</div>
+
+## quadratic discriminant analysis (QDA)
+
+An improvement over LDA, QDA does not assume the variance-covariance of the predictors are the same for all classes.
+
+```{r iris-qda, echo=TRUE}
+summary(
+  iris.qda <- qda(Species ~ Petal.Length+Petal.Width+Sepal.Length+Sepal.Width, data=iris) 
+)
+```
+
+## check the fits {data-background="/COMMON LECTURES/graphPaper.jpg"}
+
+<div class="blue3">
+
+```{r iris-qda-fits}
+qda.pred <- predict(iris.qda)
+F <- table(qda.pred$class, iris$Species)
+rownames(F) <- paste0("predicted ", iris$Species%>% levels)
+F %>% addmargins 
+
+miss.rate <- 1 - sum(diag(F))/length(iris$Species)
+names(miss.rate) <- "misclassification rate"
+miss.rate
+```
+
+</div>
+
+# regression trees
+
+
+## how it works
+
+- The algorithm examines each predictor to find the best value that partitions the data into homogeneous classes.   @EverittHothorn2006, pp.131-142
+
+>- Then it does the same thing in each partion
+
+>- Then it does the same thing in each partion of each partition
+
+>- Then it does the same thing...
+
+```{r rp-iris, echo=TRUE}
+iris.rp <- rpart(Species ~ Petal.Width + Petal.Length + Sepal.Length + Sepal.Width, data=iris)
+iris.rp$cptable
+```
+
+## check the fits
+
+<div class="columns-2">
+
+```{r pr-iris-fits, fig.height=4, fig.width=4}
+prp(iris.rp, varlen=0)
+```
+
+```{r pr-iris-splits, fig.height=4, fig.width=5}
+ggplot(data=iris, aes(Petal.Width, fill=Species, color=Species)) +
+  geom_density(alpha=0.2) +
+  geom_vline(xintercept = c(0.8, 1.78), color="blue", linetype="dashed") + 
+  labs(title="Petal Width Splits") +
+  theme_classic()
+```
+</div>
+
+## fit statistics {data-background="/COMMON LECTURES/graphPaper.jpg"}
+
+<div class="blue3">
+
+```{r pr-iris-fit-stats}
+rp.pred <- predict(iris.rp, type="class")
+F <- table(rp.pred, iris$Species)
+F %>% addmargins 
+
+miss.rate <- 1 - sum(diag(F))/length(iris$Species)
+names(miss.rate) <- "misclassification rate"
+miss.rate
+```
+
+</div>
+
+# classifier smackdown 
+<img src="smackdown.jpg" align="left" width=480 height=270 >
+
+```{r Dason-splitter }
+split_data <- function(dat, props = c(.8, .15, .05), which.adjust = 1){
+  # Dason's splitter from stackOverflow
+  #
+  # Make sure proportions are positive and the adjustment isn't too big
+  stopifnot(all(props >= 0), which.adjust <= length(props))
+  
+  # could check to see if the sum is 1, but this is easier
+  props <- props/sum(props)
+  n <- nrow(dat)
+  # How large should each group be?
+  ns <- round(n * props)
+  # The previous step might give something that gives sum(ns) > n 
+  # so force the group specified in which.adjust to right size
+  ns[which.adjust] <- n - sum(ns[-which.adjust])
+  
+  ids <- rep(1:length(props), ns)
+  which.group <- sample(ids) # Shuffle ids to randomize groups
+  split(dat, which.group)
+}
+```
+
+```{r Kephart-mode}
+theMode <- function(x) {
+  temp <- table(as.vector(x))
+  return( as.numeric(names(temp)[temp==max(temp)]))
+}
+```
+
+
+## comparing classifiers | training and test data sets
+
+In practice, classifiers are evaluated using a "training-test" protocol. (@Alice2015)
+
+> - a data set is split into two parts
+>     - a **training set** and
+>     - a **test set** 
+
+> - the model is fit to the training set
+> - then evaluated against the test set
+
+```{r mammogram-data, echo=TRUE, warning=FALSE}
+mg.data <- read.csv("mammographic_masses.csv", 
+                    col.names = c("BI-RADS", "Age","Shape","Margin", "Density", "Severity"),
+                    na.strings="?")
+mg.splits <- split_data(mg.data, c(0.8, 0.2), which.adjust = 2)
+mg.training <- as.data.frame(mg.splits[1])
+names(mg.training) <-c("BI.RADS", "Age", "Shape", "Margin", "Density", "Severity")
+mg.test     <- as.data.frame(mg.splits[2])
+names(mg.test)     <-c("BI.RADS", "Age", "Shape", "Margin", "Density", "Severity")
+```
+ 
+Let's test some data on some mammogram data from @ElterSchultz-Wendtland2007.
+
+```{r clean-up-NAs, warning=FALSE}
+mg.training$BI.RADS[is.na(mg.training$BI.RADS)] <- theMode(mg.training$BI.RADS)
+mg.training$Age[is.na(mg.training$Age)] <- theMode(mg.training$Age)
+mg.training$Shape[is.na(mg.training$Shape)] <- theMode(mg.training$Shape)
+mg.training$Margin[is.na(mg.training$Margin)] <- theMode(mg.training$Margin)
+mg.training$Density[is.na(mg.training$Density)] <- theMode(mg.training$Density)
+
+mg.test$BI.RADS[is.na(mg.test$BI.RADS)] <- theMode(mg.test$BI.RADS)
+mg.test$Age[is.na(mg.test$Age)] <- theMode(mg.test$Age)
+mg.test$Shape[is.na(mg.test$Shape)] <- theMode(mg.test$Shape)
+mg.test$Margin[is.na(mg.test$Margin)] <- theMode(mg.test$Margin)
+mg.test$Density[is.na(mg.test$Density)] <- theMode(mg.test$Density)
+```
+
+## logistic regression
+
+```{r mg-logreg}
+library(nnet)
+summary(
+  logreg.model <- multinom(factor(Severity) ~ BI.RADS+Age+Shape+Margin+Density, 
+                           data=mg.training, maxit=50)
+)
+```
+
+## how did we do? {data-background="/COMMON LECTURES/graphPaper.jpg"}
+
+<div class="blue3">
+```{r mg-logreg-test}
+predicted_class <- predict(logreg.model, mg.test)
+
+( T <- table(predicted_class, mg.test$Severity) )
+log.reg.miss.rate <- 1 - sum(diag(T))/length(mg.test$Severity)
+names(log.reg.miss.rate) <- "misclassification rate"
+log.reg.miss.rate
+```
+</div>
+
+## discriminant analysis
+
+```{r mg-lda, echo=TRUE}
+summary(
+  lda.model <- lda(factor(Severity) ~ BI.RADS+Age+Shape+Margin+Density, data=mg.training) 
+)
+```
+
+## how did we do? {data-background="/COMMON LECTURES/graphPaper.jpg"}
+
+<div class="blue3">
+```{r mg-lda-fits}
+lda.pred <- predict(lda.model, mg.test)
+F <- table(lda.pred$class, mg.test$Severity)
+F %>% addmargins 
+
+lda.miss.rate <- 1 - sum(diag(F))/length(mg.test$Severity)
+names(lda.miss.rate) <- "misclassification rate"
+lda.miss.rate
+```
+</div>
+
+## regression tree
+
+```{r mg-rp, echo=TRUE}
+rp.model <- rpart(factor(Severity) ~ BI.RADS+Age+Shape+Margin+Density, data=mg.training)
+rp.model$cptable
+```
+
+## how did we do? {data-background="/COMMON LECTURES/graphPaper.jpg"}
+<div class="blue3">
+```{r mg-rp-fits}
+library(rpart)
+rp.pred <- predict(rp.model, newdata=mg.test, type="class")
+F <- table(rp.pred, mg.test$Severity)
+F %>% addmargins 
+
+rp.miss.rate <- 1 - sum(diag(F))/length(mg.test$Severity)
+names(rp.miss.rate) <- "misclassification rate"
+rp.miss.rate
+```
+</div>
+
+## and the winner is... {data-background="/COMMON LECTURES/graphPaper.jpg"}
+
+<div class="blue2">
+
+```{r smackdown-results, warning=FALSE}
+smackdown.stats <- data.frame(classifier = c("logistic regression", "discriminant analysis", "regression tree"),
+                              miss.rate = c(log.reg.miss.rate, lda.miss.rate, rp.miss.rate))
+smackdown.stats %>%
+  mutate(., miss.rate=signif(miss.rate, 4)) %>%
+  kable(., format = "html", escape=F) %>%
+  kable_styling(full_width=F, position = 'center')
+```
+</div>
+
+Can these be improved?  No. And yes.
+
+>- NO:  more data, but more importantly, more useful variables are needed.
+
+>- YES: classifiers can be improved by **boosting**, a _bootstrapping_ technique
+
+>- REAL WORLD APPLICATION: "AI's" are reading mammograms _right now_.  And you know the trick.
+
+# appendix:|the code behind the examples {data-background="/COMMON LECTURES/binary.jpg"}
+
+## you need these libraries
+
+```{r setup, echo=TRUE, eval=FALSE}
+```
+
+## plot the iris data
+
+```{r plot-iris-data, echo=TRUE, eval=FALSE}
+```
+
+## single-predictor discrimination
+
+```{r plot-iris-petal-width, echo=TRUE, eval=FALSE}
+```
+
+## linear discriminant analysis
+
+```{r iris-lda, echo=TRUE, eval=FALSE}
+```
+
+
+```{r iris-lda-fits, echo=TRUE, eval=FALSE}
+```
+
+## quadratic discriminant analysis
+
+```{r iris-qda, echo=TRUE, eval=FALSE}
+```
+
+
+```{r iris-qda-fits, echo=TRUE, eval=FALSE}
+```
+
+## smackdown | Dason's splitter
+
+**stackOverflow** contributer Dason's clever function for splitting data frames, @Dason2018. 
+```{r Dason-splitter, echo=TRUE, eval=FALSE}
+```
+
+
+## smackdown | split the data
+
+```{r mammogram-data, echo=TRUE, eval=FALSE}
+```
+
+## smackdown | data cleaning
+
+The mammogram data has more than its share of **NA** values, all for discrete variables.  Here they are replaced with the _mode_ value.  Kephart's mode calculation does the trick nicely:
+
+```{r Kephart-mode, echo=TRUE, eval=FALSE}
+```
+@Kephart2012
+
+```{r clean-up-NAs, echo=TRUE, eval=FALSE}
+```
+
+## smackdown | logistic regression
+
+```{r mg-logreg, echo=TRUE, eval=FALSE}
+```
+
+```{r mg-logreg-test, echo=TRUE, eval=FALSE}
+```
+
+## smackdown | discriminant analysis
+
+```{r mg-lda, echo=TRUE, eval=FALSE}
+```
+
+```{r mg-lda-fits, echo=TRUE, eval=FALSE}
+```
+
+## smackdown | regresssion tree
+
+```{r mg-rp, echo=TRUE, eval=FALSE}
+```
+
+```{r mg-rp-fits, echo=TRUE, eval=FALSE}
+```
+
+## smackdown | mis-classification summary
+
+```{r smackdown-results, echo=TRUE, eval=FALSE}
+```
+
+
+# references | ...to learn more {data-background="/COMMON LECTURES/library.jpg"}
+
+##

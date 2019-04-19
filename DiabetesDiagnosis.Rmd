@@ -1,0 +1,183 @@
+---
+title: "A Diabetes Classifier"
+author: "STA1403"
+date: "4/19/2019"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)        # group_by(), summarize(), %>%
+library(gridExtra)
+library(MASS)             # lda()
+library(rpart)            # rpart()
+library(rpart.plot)       # prp()
+library(mlbench)          # PimaIndiansDiabetes dataset
+```
+
+# ABSTRACT
+
+How well can machine-learning models diagnose diabetes based on simple medical data?  Three classification
+methods (logistic regression, discriminant analysis, and recursive partitioning) are compared, and we find
+the best one.
+
+# DATA
+
+The **PimaIndiansDiabetes** dataset is a sample of medical data from women in a population with a high prevalence of diabetes.  It is available in the **mlbench** package.
+
+```{r diabetes-data, echo=FALSE}
+data(PimaIndiansDiabetes)
+head(PimaIndiansDiabetes)
+```
+
+Summarize some of the predictor variables by diabetes class (**pos**/**neg**):
+
+```{r}
+group_by(PimaIndiansDiabetes, diabetes) %>%
+  summarize(.,mean.glucose=mean(glucose), sd.glucose=sd(glucose),
+            mean.pressure=mean(pressure), sd.pressure=sd(pressure),
+            n = n()) %>%
+  print.data.frame(., digits=3)
+```
+
+# ANALYSIS
+
+## Model Comparison Method
+
+
+
+```{r Dason-splitter, echo=FALSE }
+split_data <- function(dat, props = c(.8, .15, .05), which.adjust = 1){
+  # Dason's splitter from stackOverflow
+  #
+  # Make sure proportions are positive and the adjustment isn't too big
+  stopifnot(all(props >= 0), which.adjust <= length(props))
+  
+  # could check to see if the sum is 1, but this is easier
+  props <- props/sum(props)
+  n <- nrow(dat)
+  # How large should each group be?
+  ns <- round(n * props)
+  # The previous step might give something that gives sum(ns) > n 
+  # so force the group specified in which.adjust to right size
+  ns[which.adjust] <- n - sum(ns[-which.adjust])
+  
+  ids <- rep(1:length(props), ns)
+  which.group <- sample(ids) # Shuffle ids to randomize groups
+  split(dat, which.group)
+}
+```
+
+Split the data:
+
+```{r split-the-data, echo=TRUE, warning=FALSE}
+# save the "original" variable names used in the dataset
+data.names <- names(PimaIndiansDiabetes)
+
+# split data into two parts
+data.splits <- split_data(PimaIndiansDiabetes, c(0.5, 0.5), which.adjust = 2)
+training.data <- as.data.frame(data.splits[1])
+test.data     <- as.data.frame(data.splits[2])
+
+# restore the variable names
+names(training.data) <- data.names
+names(test.data) <- data.names
+
+# check your work
+head(training.data)
+head(test.data)
+```
+
+
+## Logistic Regression 
+
+```{r mg-logreg}
+library(nnet)
+summary(
+  logreg.model <- multinom(factor(diabetes) ~ pregnant+glucose+pressure+triceps+insulin+mass+pedigree+age, 
+                           data=training.data, maxit=50)
+)
+```
+
+
+```{r mg-logreg-test}
+predicted_class <- predict(logreg.model, test.data)
+
+( T <- table(predicted_class, test.data$diabetes) )
+T %>% addmargins
+
+log.reg.miss.rate <- 1 - sum(diag(T))/length(test.data$diabetes)
+names(log.reg.miss.rate) <- "misclassification rate"
+log.reg.miss.rate
+```
+
+Ouch!
+
+## Discriminant Analysis 
+
+```{r mg-lda, echo=TRUE}
+summary(
+  lda.model <- lda(factor(diabetes) ~ pregnant+glucose+pressure+triceps+insulin+mass+pedigree+age, 
+                   data=training.data) 
+)
+```
+
+How did we do? 
+
+```{r mg-lda-fits}
+lda.pred <- predict(lda.model, test.data)
+F <- table(lda.pred$class, test.data$diabetes) 
+F %>%  addmargins 
+
+lda.miss.rate <- 1 - sum(diag(F))/length(test.data$diabetes)
+names(lda.miss.rate) <- "misclassification rate"
+lda.miss.rate
+```
+ 
+Ouch again.
+
+## Regression Tree
+
+Use recursive partitioning:
+
+```{r reg-tree, echo=TRUE, fig.width=10}
+rp.model <- rpart(factor(diabetes) ~ pregnant+glucose+pressure+triceps+insulin+mass+pedigree+age,
+                  data=training.data)
+rp.model$cptable
+prp(rp.model)
+```
+
+How did we do?
+
+```{r reg-tree-fits}
+rp.pred <- predict(rp.model, newdata=test.data, type="class")
+F <- table(rp.pred, test.data$diabetes)
+F %>% addmargins 
+
+rp.miss.rate <- 1 - sum(diag(F))/length(test.data$diabetes)
+names(rp.miss.rate) <- "misclassification rate"
+rp.miss.rate
+```
+
+Triple ouch.
+
+# FINDINGS
+
+```{r comparison-results, warning=FALSE}
+comparison.stats <- data.frame(classifier = c("logistic regression", "discriminant analysis", "regression tree"),
+                              miss.rate = c(log.reg.miss.rate, lda.miss.rate, rp.miss.rate))
+comparison.stats %>%
+  mutate(., miss.rate=signif(miss.rate, 4)) %>%
+  print.data.frame(., digits=4)
+```
+
+
+# APPENDIX: Code you didn't need to see
+
+Use this function to split the classification data into **training** and **test** datasets:
+
+```{r Dason-splitter, eval=FALSE}
+```
+
